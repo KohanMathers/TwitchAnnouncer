@@ -234,6 +234,11 @@ async def info_command(interaction: discord.Interaction):
         value="[GitHub Repo](https://github.com/kohanmathers/twitchannouncer)",
         inline=False,
     )
+    embed.add_field(
+        name="Support",
+        value="[Support Server](https://discord.gg/FZuVXszuuM)",
+        inline=False,
+    )
     embed.set_footer(text="Use /help for available commands.")
 
     await interaction.response.send_message(embed=embed)
