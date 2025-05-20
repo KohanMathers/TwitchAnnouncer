@@ -18,17 +18,6 @@ settings_file = "./settings.json"
 stream_file = "./announced_streams.json"
 video_file = "./announced_videos.json"
 
-# Load YouTube credentials
-youtube_credentials = {}
-try:
-    with open(youtube_file) as f:
-        for line in f:
-            key, value = line.strip().split("=")
-            youtube_credentials[key] = value
-except FileNotFoundError:
-    logging.error(f"YouTube file '{youtube_file}' not found!")
-    raise
-
 # Load previous announced videos
 try:
     with open(video_file, "r") as f:
