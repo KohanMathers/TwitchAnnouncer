@@ -6,6 +6,7 @@ import aiohttp
 import re
 import asyncio
 import urllib.parse
+import unicodedata
 from discord.ext import commands, tasks
 
 # Configuration
@@ -15,12 +16,35 @@ token_file = "./token.txt"
 twitch_file = "./twitch.txt"
 settings_file = "./settings.json"
 stream_file = "./announced_streams.json"
+video_file = "./announced_videos.json"
+
+# Load YouTube credentials
+youtube_credentials = {}
+try:
+    with open(youtube_file) as f:
+        for line in f:
+            key, value = line.strip().split("=")
+            youtube_credentials[key] = value
+except FileNotFoundError:
+    logging.error(f"YouTube file '{youtube_file}' not found!")
+    raise
+
+# Load previous announced videos
+try:
+    with open(video_file, "r") as f:
+        announced_videos = json.load(f)
+except FileNotFoundError:
+    logging.warning(f"Announced videos file '{video_file}' not found. Starting fresh.")
+    announced_videos = {}
+    with open(video_file, "w") as f:
+        json.dump({}, f)
 announced_streams = {}
 ALLOWED_GUILD_ID = 1227640355625766963
 allowed_to_call_api = False
 
 # Set up logging
-logging.basicConfig(level=log_level, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=log_level,
+                    format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Load Bot Token
 try:
@@ -46,7 +70,8 @@ try:
     with open(stream_file, "r") as f:
         announced_streams = json.load(f)
 except FileNotFoundError:
-    logging.warning(f"Announced streams file '{stream_file}' not found. Starting fresh.")
+    logging.warning(
+        f"Announced streams file '{stream_file}' not found. Starting fresh.")
     announced_streams = {}
     with open(stream_file, "w") as f:
         json.dump({}, f)
@@ -56,7 +81,8 @@ try:
     with open(settings_file, "r") as f:
         settings = json.load(f)
 except FileNotFoundError:
-    logging.warning(f"Settings file '{settings_file}' not found. Creating a new one.")
+    logging.warning(
+        f"Settings file '{settings_file}' not found. Creating a new one.")
     settings = {}
     with open(settings_file, "w") as f:
         json.dump(settings, f)
@@ -69,6 +95,7 @@ intents.guilds = True
 bot = commands.Bot(command_prefix="$", intents=intents)
 start_time = time.time()
 
+
 @bot.event
 async def on_ready():
     try:
@@ -79,11 +106,40 @@ async def on_ready():
     logging.info(f"Bot connected as {bot.user.name}")
     check_live_streams.start()
     refresh_twitch_token.start()
+    for guild in bot.guilds:
+        logging.info(f"Bot is in guild: {guild.name} (ID: {guild.id}")
 
-@bot.tree.command(name="setchannel", description="Set the notification channel.")
-async def setchannel_command(interaction: discord.Interaction, role: discord.Role = None):
+MEOW_PATTERN = re.compile(r"\b(m+[\W_]*[e3éèêëɛə]+[\W_]*[Oʻo0@aäâàáãåæœ]*[\W_]*[wvüúùûu]+)\b", re.IGNORECASE)
+
+def normalize_text(text):
+    return unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('ASCII')
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    normalized = normalize_text(message.content)
+
+    if MEOW_PATTERN.search(normalized):
+        try:
+            await message.delete()
+            print(f"Deleted message: {message.content}")
+        except discord.Forbidden:
+            print("Bot does not have permission to delete messages.")
+        except discord.HTTPException as e:
+            print(f"Failed to delete message: {e}")
+
+    await bot.process_commands(message)
+
+
+@bot.tree.command(name="setchannel",
+                  description="Set the notification channel.")
+async def setchannel_command(interaction: discord.Interaction,
+                             role: discord.Role = None):
     if not interaction.user.guild_permissions.manage_channels:
-        await interaction.response.send_message("You do not have permission to manage channels.", ephemeral=True)
+        await interaction.response.send_message(
+            "You do not have permission to manage channels.", ephemeral=True)
         return
 
     guild_id = str(interaction.guild.id)
@@ -96,40 +152,59 @@ async def setchannel_command(interaction: discord.Interaction, role: discord.Rol
             f"Ping channel set to {interaction.channel.mention} and will notify the role {role.mention}."
         )
     else:
-        settings[guild_id].pop("ping_role_id", None)  # Remove if no role is provided
-        await interaction.response.send_message(f"Ping channel set to {interaction.channel.mention}. No role will be notified.")
+        settings[guild_id].pop("ping_role_id",
+                               None)
+        await interaction.response.send_message(
+            f"Ping channel set to {interaction.channel.mention}. No role will be notified."
+        )
 
     with open(settings_file, "w") as f:
         json.dump(settings, f)
 
+
 @bot.tree.command(name="register", description="Register a Twitch account.")
 async def register_command(interaction: discord.Interaction, username: str):
+    username = username.lower()
     settings.setdefault(str(interaction.guild.id), {"registered_users": []})
     guild_settings = settings[str(interaction.guild.id)]
     if username not in guild_settings["registered_users"]:
         guild_settings["registered_users"].append(username)
         with open(settings_file, "w") as f:
             json.dump(settings, f)
-        await interaction.response.send_message(f"Registered Twitch account: {username}.")
+        await interaction.response.send_message(
+            f"Registered Twitch account: {username}.")
     else:
-        await interaction.response.send_message(f"{username} is already registered.")
+        await interaction.response.send_message(
+            f"{username} is already registered.")
 
-@bot.tree.command(name="unregister", description="Unregister a Twitch account.")
+
+@bot.tree.command(name="unregister",
+                  description="Unregister a Twitch account.")
 async def unregister_command(interaction: discord.Interaction, username: str):
-    guild_settings = settings.setdefault(str(interaction.guild.id), {"registered_users": []})
+    username = username.lower()
+    guild_settings = settings.setdefault(str(interaction.guild.id),
+                                         {"registered_users": []})
     if username in guild_settings["registered_users"]:
         guild_settings["registered_users"].remove(username)
         with open(settings_file, "w") as f:
             json.dump(settings, f)
-        await interaction.response.send_message(f"Unregistered Twitch account: {username}.")
+        await interaction.response.send_message(
+            f"Unregistered Twitch account: {username}.")
     else:
-        await interaction.response.send_message(f"{username} is not registered.")
+        await interaction.response.send_message(
+            f"{username} is not registered.")
 
-@bot.tree.command(name="listaccounts", description="Show registered Twitch accounts.")
+
+@bot.tree.command(name="listaccounts",
+                  description="Show registered Twitch accounts.")
 async def listaccounts_command(interaction: discord.Interaction):
-    registered_users = settings.get(str(interaction.guild.id), {}).get("registered_users", [])
-    response = "\n".join(registered_users) if registered_users else "No registered accounts."
-    await interaction.response.send_message(f"**Registered Twitch Accounts:**\n`{response}`")
+    registered_users = settings.get(str(interaction.guild.id),
+                                    {}).get("registered_users", [])
+    response = "\n".join(
+        registered_users) if registered_users else "No registered accounts."
+    await interaction.response.send_message(
+        f"**Registered Twitch Accounts:**\n`{response}`")
+
 
 @bot.tree.command(name="info", description="Display bot information.")
 async def info_command(interaction: discord.Interaction):
@@ -141,17 +216,12 @@ async def info_command(interaction: discord.Interaction):
         color=discord.Color.blue(),
     )
     embed.add_field(name="Bot Name", value=bot.user.name, inline=False)
-    embed.add_field(
-        name="Uptime", value=f"{uptime // 3600}h {(uptime % 3600) // 60}m", inline=False
-    )
+    embed.add_field(name="Uptime",
+                    value=f"{uptime // 3600}h {(uptime % 3600) // 60}m",
+                    inline=False)
     embed.add_field(
         name="Developers",
         value=f"[KohanMathers](https://github.com/kohanmathers)",
-        inline=False,
-    )
-    embed.add_field(
-        name="Source Code",
-        value="[GitHub Repo](https://github.com/kohanmathers/twitchannouncer)",
         inline=False,
     )
     embed.add_field(
@@ -159,12 +229,43 @@ async def info_command(interaction: discord.Interaction):
         value=len(bot.guilds),
         inline=False,
     )
+    embed.add_field(
+        name="Source Code",
+        value="[GitHub Repo](https://github.com/kohanmathers/twitchannouncer)",
+        inline=False,
+    )
     embed.set_footer(text="Use /help for available commands.")
 
     await interaction.response.send_message(embed=embed)
 
 
-@bot.tree.command(name="help", description="Shows a list of available commands.")
+@bot.tree.command(name="youtuberegister", description="Register a YouTube channel.")
+async def youtuberegister_command(interaction: discord.Interaction, channel_id: str):
+    settings.setdefault(str(interaction.guild.id), {"youtube_channels": []})
+    guild_settings = settings[str(interaction.guild.id)]
+    guild_settings.setdefault("youtube_channels", [])
+
+    if channel_id not in guild_settings["youtube_channels"]:
+        guild_settings["youtube_channels"].append(channel_id)
+        with open(settings_file, "w") as f:
+            json.dump(settings, f)
+        await interaction.response.send_message(f"Registered YouTube channel: {channel_id}")
+    else:
+        await interaction.response.send_message(f"Channel {channel_id} is already registered.")
+
+@bot.tree.command(name="youtubeunregister", description="Unregister a YouTube channel.")
+async def youtubeunregister_command(interaction: discord.Interaction, channel_id: str):
+    guild_settings = settings.setdefault(str(interaction.guild.id), {"youtube_channels": []})
+    if channel_id in guild_settings.get("youtube_channels", []):
+        guild_settings["youtube_channels"].remove(channel_id)
+        with open(settings_file, "w") as f:
+            json.dump(settings, f)
+        await interaction.response.send_message(f"Unregistered YouTube channel: {channel_id}")
+    else:
+        await interaction.response.send_message(f"Channel {channel_id} is not registered.")
+
+@bot.tree.command(name="help",
+                  description="Shows a list of available commands.")
 async def info_command(interaction: discord.Interaction):
     embed = discord.Embed(
         title="Commands List",
@@ -173,18 +274,28 @@ async def info_command(interaction: discord.Interaction):
     )
     embed.add_field(
         name="/setchannel <OPTIONAL: role>",
-        value="Sets the announcements channel and registeres the specified roles for announcement pings if specified (requires the Manage Channels permission).",
-        inline=False
-    )
+        value=
+        "Sets the announcements channel and registers the specified roles for announcement pings if specified (requires the Manage Channels permission).",
+        inline=False)
     embed.add_field(
         name="/register <username>",
-        value="Registers a twitch username for announcements.",
+        value="Registers a Twitch username for announcements.",
         inline=False,
     )
     embed.add_field(
         name="/unregister <username>",
-        value="Unregisters a twitch username from announcements.",
+        value="Unregisters a Twitch username from announcements.",
         inline=False,
+    )
+    embed.add_field(
+        name="/youtuberegister <channel_id>",
+        value="Registers a YouTube channel for announcements.",
+        inline=False,
+    )
+    embed.add_field(
+        name="/youtubeunregister <channel_id>",
+        value="Unregisters a YouTube channel from announcements.",
+        inline=False
     )
     embed.add_field(
         name="/listaccounts",
@@ -208,11 +319,14 @@ async def info_command(interaction: discord.Interaction):
 @tasks.loop(minutes=1)
 async def check_live_streams():
     global allowed_to_call_api
-    headers = {"Client-ID": credentials.get("CLIENT_ID"), "Authorization": f"Bearer {credentials.get('ACCESS_TOKEN')}"}
-    
+    headers = {
+        "Client-ID": credentials.get("CLIENT_ID"),
+        "Authorization": f"Bearer {credentials.get('ACCESS_TOKEN')}"
+    }
+
     for guild_id, guild_settings in settings.items():
         ping_channel_id = guild_settings.get("ping_channel_id")
-        ping_role_id = guild_settings.get("ping_role_id")
+        ping_role_id = guild_settings.get("ping_role_id")  # Get stored role ID
         registered_users = guild_settings.get("registered_users", [])
 
         if not ping_channel_id or not registered_users:
@@ -225,8 +339,10 @@ async def check_live_streams():
         batch_size = 100
         if allowed_to_call_api:
             for i in range(0, len(registered_users), batch_size):
-                batch = registered_users[i:i+batch_size]
-                query_params = "&".join(f"user_login={urllib.parse.quote_plus(user)}" for user in batch)
+                batch = registered_users[i:i + batch_size]
+                query_params = "&".join(
+                    f"user_login={urllib.parse.quote_plus(user)}"
+                    for user in batch)
                 url = f"https://api.twitch.tv/helix/streams?{query_params}&_={int(time.time())}"
 
                 async with aiohttp.ClientSession() as session:
@@ -237,30 +353,42 @@ async def check_live_streams():
                         data = await response.json()
 
                         for stream in data.get("data", []):
-                            stream_id = stream.get("id")
-                            if stream_id not in announced_streams.get(guild_id, []):
-                                username = stream.get("user_name")
-                                game_name = stream.get("game_name", "Unknown Game")
-                                title = stream.get("title", "No Title")
-                                username_lower = username.lower()
+                            username_api = stream.get(
+                                "user_name")  # Keep API capitalization
+                            username_lower = username_api.lower(
+                            )  # Match against stored usernames
 
-                                embed = discord.Embed(
-                                    title=f"🔴 {username} is live!",
-                                    description=f"**{title}**\nNow playing: {game_name}\n[Watch here](https://twitch.tv/{username})"
-                                )
-                                embed.set_image(
-                                    url=f"https://static-cdn.jtvnw.net/previews-ttv/live_user_{username_lower}-1920x1080.jpg"
-                                )
+                            if username_lower in registered_users:
+                                stream_id = stream.get("id")
+                                if stream_id not in announced_streams.get(
+                                        guild_id, []):
+                                    game_name = stream.get(
+                                        "game_name", "Unknown Game")
+                                    title = stream.get("title", "No Title")
 
-                                mention = f"<@&{ping_role_id}> " if ping_role_id else ""
-                                await ping_channel.send(content=mention, embed=embed)
+                                    embed = discord.Embed(
+                                        title=
+                                        f"🔴 {username_api} is live!",  # Use API capitalization
+                                        description=
+                                        f"**{title}**\nNow playing: {game_name}\n[Watch here](https://twitch.tv/{username_api})"
+                                    )
+                                    embed.set_image(
+                                        url=
+                                        f"https://static-cdn.jtvnw.net/previews-ttv/live_user_{username_lower}-1920x1080.jpg"
+                                    )
 
-                                announced_streams.setdefault(guild_id, []).append(stream_id)
+                                    mention = f"<@&{ping_role_id}> " if ping_role_id else ""
+                                    await ping_channel.send(content=mention,
+                                                            embed=embed)
+
+                                    announced_streams.setdefault(
+                                        guild_id, []).append(stream_id)
 
         await asyncio.sleep(1)
 
     with open(stream_file, "w") as f:
         json.dump(announced_streams, f)
+
 
 @tasks.loop(hours=24)
 async def refresh_twitch_token():
@@ -302,13 +430,14 @@ async def refresh_twitch_token():
                         allowed_to_call_api = True
                     else:
                         logging.error(
-                            "Failed to retrieve new tokens. Response: {}".format(result)
-                        )
+                            "Failed to retrieve new tokens. Response: {}".
+                            format(result))
                 else:
                     logging.error(
                         f"Failed to refresh token. Status code: {response.status}, Response: {await response.text()}"
                     )
     except Exception as e:
         logging.error(f"An error occurred while refreshing Twitch token: {e}")
+
 
 bot.run(token)
