@@ -238,34 +238,6 @@ async def info_command(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed)
 
-
-@bot.tree.command(name="youtuberegister", description="Register a YouTube channel.")
-async def youtuberegister_command(interaction: discord.Interaction, channel_id: str):
-    settings.setdefault(str(interaction.guild.id), {"youtube_channels": []})
-    guild_settings = settings[str(interaction.guild.id)]
-    guild_settings.setdefault("youtube_channels", [])
-
-    if channel_id not in guild_settings["youtube_channels"]:
-        guild_settings["youtube_channels"].append(channel_id)
-        with open(settings_file, "w") as f:
-            json.dump(settings, f)
-        await interaction.response.send_message(f"Registered YouTube channel: {channel_id}")
-    else:
-        await interaction.response.send_message(f"Channel {channel_id} is already registered.")
-
-@bot.tree.command(name="youtubeunregister", description="Unregister a YouTube channel.")
-async def youtubeunregister_command(interaction: discord.Interaction, channel_id: str):
-    guild_settings = settings.setdefault(str(interaction.guild.id), {"youtube_channels": []})
-    if channel_id in guild_settings.get("youtube_channels", []):
-        guild_settings["youtube_channels"].remove(channel_id)
-        with open(settings_file, "w") as f:
-            json.dump(settings, f)
-        await interaction.response.send_message(f"Unregistered YouTube channel: {channel_id}")
-    else:
-        await interaction.response.send_message(f"Channel {channel_id} is not registered.")
-
-@bot.tree.command(name="help",
-                  description="Shows a list of available commands.")
 async def info_command(interaction: discord.Interaction):
     embed = discord.Embed(
         title="Commands List",
